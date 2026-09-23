@@ -32,8 +32,8 @@ uniform float preBlurAmount;
 uniform float focalDistance;
 uniform float apertureAngle;
 // Lens model: 0 pinhole through the EWA Jacobian, 1 equidistant fisheye, 2 Brown-Conrady with
-// lensParams = (k1, k2, p1, p2). Under a lens the splat projects by the unscented transform:
-// seven sigma points through the lens map, their mean and covariance in pixels.
+// lensParams = (k1, k2, p1, p2). Under a lens the splat projects by the unscented transform: six
+// sigma points through the lens map, their mean and covariance in pixels.
 uniform int lensModel;
 uniform vec4 lensParams;
 uniform float clipXY;
@@ -54,7 +54,8 @@ bool isPerspectiveMatrix( mat4 m ) {
 // Brown-Conrady map on the monotone part of the radial polynomial. Past the turning point the
 // map folds back into the frame, which draws ghosts.
 bool lensValid(vec3 v) {
-    if (v.z > -1e-4) {
+    // In front of the camera plane by a margin: a point grazing the plane maps to the frame's edge and beyond.
+    if (v.z > -1e-2) {
         return false;
     }
     if (lensModel == 2) {
@@ -237,28 +238,41 @@ void main() {
     vec2 pixelCenter = vec2(0.0);
     mat3 cov2D;
     if (lensModel != 0 && !isOrthographic && !enableCovSplats) {
-        // Sigma points along the splat's own axes, kappa = 0: centre +- sqrt(3) sigma, weight 1/6 each.
-        mat3 RS = scaleQuaternionToMatrix(scales, quatQuat(renderToViewQuat, quaternion));
-        vec2 p[6];
-        vec2 mean = vec2(0.0);
+        // The unscented transform through the lens map: six sigma points along the splat's own axes
+        // at +- sqrt(3) sigma, weight 1/6 each, their mean and covariance in pixels. For a linear map
+        // this is J Sigma J^T exactly; a bent map adds its curvature over the splat to the moments.
+        // No local array: a vertex shader array indexed by 2 i and 2 i + 1 miscompiled on ANGLE over
+        // NVIDIA OpenGL and drew streaks, so each point is recomputed in the covariance pass.
         if (!lensValid(viewCenter)) {
             return;
         }
+        vec2 bound = 2.0 * clipXY * 0.5 * scaledRenderSize;
+        mat3 RS = scaleQuaternionToMatrix(scales, quatQuat(renderToViewQuat, quaternion));
+        vec2 mean = vec2(0.0);
         for (int i = 0; i < 3; i++) {
             vec3 axis = 1.7320508 * RS[i];
-            // A sigma point off the valid map stretches the splat across the frame: drop the splat.
+            // A sigma point off the valid map, or mapped far outside the frame, would stretch the
+            // splat across the view: drop the splat.
             if (!lensValid(viewCenter + axis) || !lensValid(viewCenter - axis)) {
                 return;
             }
-            p[2 * i] = lensProject(viewCenter + axis, focal);
-            p[2 * i + 1] = lensProject(viewCenter - axis, focal);
-            mean += p[2 * i] + p[2 * i + 1];
+            vec2 pp = lensProject(viewCenter + axis, focal);
+            vec2 pm = lensProject(viewCenter - axis, focal);
+            if (any(greaterThan(abs(pp), bound)) || any(greaterThan(abs(pm), bound))) {
+                return;
+            }
+            mean += pp + pm;
         }
         mean /= 6.0;
         mat2 c = mat2(0.0);
-        for (int i = 0; i < 6; i++) {
-            vec2 d = p[i] - mean;
-            c += (1.0 / 6.0) * mat2(d.x * d.x, d.x * d.y, d.x * d.y, d.y * d.y);
+        for (int i = 0; i < 3; i++) {
+            vec3 axis = 1.7320508 * RS[i];
+            vec2 dp = lensProject(viewCenter + axis, focal) - mean;
+            vec2 dm = lensProject(viewCenter - axis, focal) - mean;
+            c += (1.0 / 6.0) * (mat2(dp.x * dp.x, dp.x * dp.y, dp.x * dp.y, dp.y * dp.y) + mat2(dm.x * dm.x, dm.x * dm.y, dm.x * dm.y, dm.y * dm.y));
+        }
+        if (!((c[0][0] + c[1][1]) < 1e12)) {
+            return;
         }
         cov2D = mat3(c[0][0], c[0][1], 0.0, c[1][0], c[1][1], 0.0, 0.0, 0.0, 0.0);
         pixelCenter = mean;
