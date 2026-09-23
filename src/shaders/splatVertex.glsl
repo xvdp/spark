@@ -31,6 +31,11 @@ uniform float blurAmount;
 uniform float preBlurAmount;
 uniform float focalDistance;
 uniform float apertureAngle;
+// Lens model: 0 pinhole through the EWA Jacobian, 1 equidistant fisheye, 2 Brown-Conrady with
+// lensParams = (k1, k2, p1, p2). Under a lens the splat projects by the unscented transform:
+// seven sigma points through the lens map, their mean and covariance in pixels.
+uniform int lensModel;
+uniform vec4 lensParams;
 uniform float clipXY;
 uniform float focalAdjustment;
 
@@ -44,6 +49,43 @@ bool isPerspectiveMatrix( mat4 m ) {
 }
 
 #include <logdepthbuf_pars_vertex>
+
+// Whether the lens map is valid at a view-space point: in front of the camera plane, and for the
+// Brown-Conrady map on the monotone part of the radial polynomial. Past the turning point the
+// map folds back into the frame, which draws ghosts.
+bool lensValid(vec3 v) {
+    if (v.z > -1e-4) {
+        return false;
+    }
+    if (lensModel == 2) {
+        vec2 n = v.xy / -v.z;
+        float r2 = dot(n, n);
+        // d(r (1 + k1 r^2 + k2 r^4)) / dr = 1 + 3 k1 r^2 + 5 k2 r^4
+        return 1.0 + 3.0 * lensParams.x * r2 + 5.0 * lensParams.y * r2 * r2 > 0.0;
+    }
+    return true;
+}
+
+// A view-space point to pixel coordinates centred on the principal point, through the lens.
+vec2 lensProject(vec3 v, vec2 focal) {
+    if (lensModel == 1) {
+        // Equidistant fisheye: r = f * theta, theta the angle from the optical axis.
+        float rxy = length(v.xy);
+        float theta = atan(rxy, -v.z);
+        vec2 dir = rxy > 1e-8 ? v.xy / rxy : vec2(0.0);
+        return focal * theta * dir;
+    }
+    // Brown-Conrady on the normalized image plane.
+    float invZ = 1.0 / -v.z;
+    vec2 n = v.xy * invZ;
+    float r2 = dot(n, n);
+    float radial = 1.0 + lensParams.x * r2 + lensParams.y * r2 * r2;
+    vec2 tangential = vec2(
+        2.0 * lensParams.z * n.x * n.y + lensParams.w * (r2 + 2.0 * n.x * n.x),
+        lensParams.z * (r2 + 2.0 * n.y * n.y) + 2.0 * lensParams.w * n.x * n.y
+    );
+    return focal * (n * radial + tangential);
+}
 
 void main() {
     // Default to outside the frustum so it's discarded if we return early
@@ -140,9 +182,9 @@ void main() {
         return;
     }
 
-    // Discard splats more than clipXY times outside the XY frustum
+    // Discard splats more than clipXY times outside the XY frustum. A lens clips on its own map.
     float clip = clipXY * clipCenter.w;
-    if (abs(clipCenter.x) > clip || abs(clipCenter.y) > clip) {
+    if (lensModel == 0 && (abs(clipCenter.x) > clip || abs(clipCenter.y) > clip)) {
         return;
     }
 
@@ -190,6 +232,41 @@ void main() {
     vec2 scaledRenderSize = renderSize * focalAdjustment;
     vec2 focal = 0.5 * scaledRenderSize * vec2(projectionMatrix[0][0], projectionMatrix[1][1]);
 
+    // Pixel centre of the splat, and its 2D covariance: from the EWA Jacobian for the pinhole,
+    // from the unscented transform through the lens map otherwise.
+    vec2 pixelCenter = vec2(0.0);
+    mat3 cov2D;
+    if (lensModel != 0 && !isOrthographic && !enableCovSplats) {
+        // Sigma points along the splat's own axes, kappa = 0: centre +- sqrt(3) sigma, weight 1/6 each.
+        mat3 RS = scaleQuaternionToMatrix(scales, quatQuat(renderToViewQuat, quaternion));
+        vec2 p[6];
+        vec2 mean = vec2(0.0);
+        if (!lensValid(viewCenter)) {
+            return;
+        }
+        for (int i = 0; i < 3; i++) {
+            vec3 axis = 1.7320508 * RS[i];
+            // A sigma point off the valid map stretches the splat across the frame: drop the splat.
+            if (!lensValid(viewCenter + axis) || !lensValid(viewCenter - axis)) {
+                return;
+            }
+            p[2 * i] = lensProject(viewCenter + axis, focal);
+            p[2 * i + 1] = lensProject(viewCenter - axis, focal);
+            mean += p[2 * i] + p[2 * i + 1];
+        }
+        mean /= 6.0;
+        mat2 c = mat2(0.0);
+        for (int i = 0; i < 6; i++) {
+            vec2 d = p[i] - mean;
+            c += (1.0 / 6.0) * mat2(d.x * d.x, d.x * d.y, d.x * d.y, d.y * d.y);
+        }
+        cov2D = mat3(c[0][0], c[0][1], 0.0, c[1][0], c[1][1], 0.0, 0.0, 0.0, 0.0);
+        pixelCenter = mean;
+        // The pinhole frustum clip above does not apply to a wide lens: clip on the mapped centre.
+        if (any(greaterThan(abs(pixelCenter), clipXY * 0.5 * scaledRenderSize))) {
+            return;
+        }
+    } else {
     mat3 J;
     if (isOrthographic) {
         J = mat3(
@@ -210,7 +287,8 @@ void main() {
 
     // Compute the 2D covariance by projecting the 3D covariance
     // and picking out the XY plane components.
-    mat3 cov2D = transpose(J) * cov3D * J;
+    cov2D = transpose(J) * cov3D * J;
+    }
     float a = cov2D[0][0];
     float d = cov2D[1][1];
     float b = cov2D[0][1];
@@ -266,6 +344,9 @@ void main() {
 
     // Compute NDC center of the splat
     vec3 ndcCenter = clipCenter.xyz / clipCenter.w;
+    if (lensModel != 0 && !isOrthographic && !enableCovSplats) {
+        ndcCenter.xy = pixelCenter * (2.0 / scaledRenderSize);
+    }
     vec3 ndc = vec3(ndcCenter.xy + ndcOffset, ndcCenter.z);
 
     vNdc = ndc;

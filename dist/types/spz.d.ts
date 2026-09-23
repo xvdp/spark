@@ -5,5 +5,5 @@ export declare function transcodeSpz(input: TranscodeSpzInput): Promise<{
     clippedCount: number;
 }>;
 export declare function writeSpz(packedSplats: PackedSplats, maxSh?: number, fractionalBits?: number): {
-    fileBytes: Uint8Array<ArrayBufferLike>;
+    fileBytes: any;
 };

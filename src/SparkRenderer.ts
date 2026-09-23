@@ -128,6 +128,18 @@ export interface SparkRendererOptions {
    */
   apertureAngle?: number;
   /**
+   * Lens model: 0 pinhole through the EWA Jacobian, 1 equidistant fisheye, 2 Brown-Conrady.
+   * Under a lens each splat projects by the unscented transform, seven sigma points through
+   * the lens map. The focal length in pixels comes from the camera's projection matrix.
+   * @default 0
+   */
+  lensModel?: number;
+  /**
+   * Brown-Conrady coefficients (k1, k2, p1, p2) on the normalized image plane.
+   * @default [0, 0, 0, 0]
+   */
+  lensParams?: [number, number, number, number];
+  /**
    * Modulate Gaussian kernel falloff. 0 means "no falloff, flat shading",
    * while 1 is the normal Gaussian kernel.
    * @default 1.0
@@ -344,6 +356,8 @@ export class SparkRenderer extends THREE.Mesh {
   blurAmount: number;
   focalDistance: number;
   apertureAngle: number;
+  lensModel: number;
+  lensParams: [number, number, number, number];
   falloff: number;
   clipXY: number;
   focalAdjustment: number;
@@ -515,6 +529,8 @@ export class SparkRenderer extends THREE.Mesh {
     this.blurAmount = options.blurAmount ?? 0.3;
     this.focalDistance = options.focalDistance ?? 0.0;
     this.apertureAngle = options.apertureAngle ?? 0.0;
+    this.lensModel = options.lensModel ?? 0;
+    this.lensParams = options.lensParams ?? [0, 0, 0, 0];
     this.falloff = options.falloff ?? 1.0;
     this.clipXY = options.clipXY ?? 1.4;
     this.focalAdjustment = options.focalAdjustment ?? 1.0;
@@ -645,6 +661,8 @@ export class SparkRenderer extends THREE.Mesh {
       focalDistance: { value: 0.0 },
       // Full-width angle of aperture opening (in radians)
       apertureAngle: { value: 0.0 },
+      lensModel: { value: 0 },
+      lensParams: { value: new THREE.Vector4(0, 0, 0, 0) },
       // Modulate Gaussian kernal falloff. 0 means "no falloff, flat shading",
       // 1 is normal e^-x^2 falloff.
       falloff: { value: 1.0 },
@@ -824,6 +842,8 @@ export class SparkRenderer extends THREE.Mesh {
     this.uniforms.blurAmount.value = spark.blurAmount;
     this.uniforms.focalDistance.value = spark.focalDistance;
     this.uniforms.apertureAngle.value = spark.apertureAngle;
+    this.uniforms.lensModel.value = spark.lensModel;
+    (this.uniforms.lensParams.value as THREE.Vector4).set(spark.lensParams[0], spark.lensParams[1], spark.lensParams[2], spark.lensParams[3]);
     this.uniforms.falloff.value = spark.falloff;
     this.uniforms.clipXY.value = spark.clipXY;
     this.uniforms.focalAdjustment.value = spark.focalAdjustment;

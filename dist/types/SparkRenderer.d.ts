@@ -102,6 +102,18 @@ export interface SparkRendererOptions {
      */
     apertureAngle?: number;
     /**
+     * Lens model: 0 pinhole through the EWA Jacobian, 1 equidistant fisheye, 2 Brown-Conrady.
+     * Under a lens each splat projects by the unscented transform, seven sigma points through
+     * the lens map. The focal length in pixels comes from the camera's projection matrix.
+     * @default 0
+     */
+    lensModel?: number;
+    /**
+     * Brown-Conrady coefficients (k1, k2, p1, p2) on the normalized image plane.
+     * @default [0, 0, 0, 0]
+     */
+    lensParams?: [number, number, number, number];
+    /**
      * Modulate Gaussian kernel falloff. 0 means "no falloff, flat shading",
      * while 1 is the normal Gaussian kernel.
      * @default 1.0
@@ -311,6 +323,8 @@ export declare class SparkRenderer extends THREE.Mesh {
     blurAmount: number;
     focalDistance: number;
     apertureAngle: number;
+    lensModel: number;
+    lensParams: [number, number, number, number];
     falloff: number;
     clipXY: number;
     focalAdjustment: number;
@@ -462,6 +476,12 @@ export declare class SparkRenderer extends THREE.Mesh {
         };
         apertureAngle: {
             value: number;
+        };
+        lensModel: {
+            value: number;
+        };
+        lensParams: {
+            value: THREE.Vector4;
         };
         falloff: {
             value: number;
