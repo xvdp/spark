@@ -113,6 +113,8 @@ export interface SparkRendererOptions {
      * @default [0, 0, 0, 0]
      */
     lensParams?: [number, number, number, number];
+    /** Anamorphic squeeze of the Brown-Conrady map, 1 for a spherical lens. */
+    lensSqueeze?: number;
     /**
      * Modulate Gaussian kernel falloff. 0 means "no falloff, flat shading",
      * while 1 is the normal Gaussian kernel.
@@ -325,6 +327,7 @@ export declare class SparkRenderer extends THREE.Mesh {
     apertureAngle: number;
     lensModel: number;
     lensParams: [number, number, number, number];
+    lensSqueeze: number;
     falloff: number;
     clipXY: number;
     focalAdjustment: number;
@@ -482,6 +485,9 @@ export declare class SparkRenderer extends THREE.Mesh {
         };
         lensParams: {
             value: THREE.Vector4;
+        };
+        lensSqueeze: {
+            value: number;
         };
         falloff: {
             value: number;

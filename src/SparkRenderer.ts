@@ -139,6 +139,8 @@ export interface SparkRendererOptions {
    * @default [0, 0, 0, 0]
    */
   lensParams?: [number, number, number, number];
+  /** Anamorphic squeeze of the Brown-Conrady map, 1 for a spherical lens. */
+  lensSqueeze?: number;
   /**
    * Modulate Gaussian kernel falloff. 0 means "no falloff, flat shading",
    * while 1 is the normal Gaussian kernel.
@@ -358,6 +360,7 @@ export class SparkRenderer extends THREE.Mesh {
   apertureAngle: number;
   lensModel: number;
   lensParams: [number, number, number, number];
+  lensSqueeze: number;
   falloff: number;
   clipXY: number;
   focalAdjustment: number;
@@ -531,6 +534,7 @@ export class SparkRenderer extends THREE.Mesh {
     this.apertureAngle = options.apertureAngle ?? 0.0;
     this.lensModel = options.lensModel ?? 0;
     this.lensParams = options.lensParams ?? [0, 0, 0, 0];
+    this.lensSqueeze = options.lensSqueeze ?? 1;
     this.falloff = options.falloff ?? 1.0;
     this.clipXY = options.clipXY ?? 1.4;
     this.focalAdjustment = options.focalAdjustment ?? 1.0;
@@ -663,6 +667,7 @@ export class SparkRenderer extends THREE.Mesh {
       apertureAngle: { value: 0.0 },
       lensModel: { value: 0 },
       lensParams: { value: new THREE.Vector4(0, 0, 0, 0) },
+      lensSqueeze: { value: 1 },
       // Modulate Gaussian kernal falloff. 0 means "no falloff, flat shading",
       // 1 is normal e^-x^2 falloff.
       falloff: { value: 1.0 },
@@ -844,6 +849,7 @@ export class SparkRenderer extends THREE.Mesh {
     this.uniforms.apertureAngle.value = spark.apertureAngle;
     this.uniforms.lensModel.value = spark.lensModel;
     (this.uniforms.lensParams.value as THREE.Vector4).set(spark.lensParams[0], spark.lensParams[1], spark.lensParams[2], spark.lensParams[3]);
+    this.uniforms.lensSqueeze.value = spark.lensSqueeze;
     this.uniforms.falloff.value = spark.falloff;
     this.uniforms.clipXY.value = spark.clipXY;
     this.uniforms.focalAdjustment.value = spark.focalAdjustment;

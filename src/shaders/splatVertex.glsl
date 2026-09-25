@@ -31,11 +31,14 @@ uniform float blurAmount;
 uniform float preBlurAmount;
 uniform float focalDistance;
 uniform float apertureAngle;
-// Lens model: 0 pinhole through the EWA Jacobian, 1 equidistant fisheye, 2 Brown-Conrady with
-// lensParams = (k1, k2, p1, p2). Under a lens the splat projects by the unscented transform: six
-// sigma points through the lens map, their mean and covariance in pixels.
+// Lens models: 0 pinhole -> EWA Jacobian.
+// 1 equidistant fisheye, 2 Brown-Conrady with lensParams = (k1, k2, p1, p2) -> Unscented T.
+// UT: splat projects six sigma points through lens map. Mean and covariance in pixels.
 uniform int lensModel;
 uniform vec4 lensParams;
+// Anamorphic squeeze: compress horizontal plane before the radial map then stretch back.
+// Barrel distorsion differs on the axis. squeeze=1 for a spherical lens.
+uniform float lensSqueeze;
 uniform float clipXY;
 uniform float focalAdjustment;
 
@@ -59,7 +62,7 @@ bool lensValid(vec3 v) {
         return false;
     }
     if (lensModel == 2) {
-        vec2 n = v.xy / -v.z;
+        vec2 n = vec2(v.x / lensSqueeze, v.y) / -v.z;
         float r2 = dot(n, n);
         // d(r (1 + k1 r^2 + k2 r^4)) / dr = 1 + 3 k1 r^2 + 5 k2 r^4
         return 1.0 + 3.0 * lensParams.x * r2 + 5.0 * lensParams.y * r2 * r2 > 0.0;
@@ -76,16 +79,17 @@ vec2 lensProject(vec3 v, vec2 focal) {
         vec2 dir = rxy > 1e-8 ? v.xy / rxy : vec2(0.0);
         return focal * theta * dir;
     }
-    // Brown-Conrady on the normalized image plane.
+    // Brown-Conrady on the normalized image plane, squeezed across for an anamorphic lens.
     float invZ = 1.0 / -v.z;
-    vec2 n = v.xy * invZ;
+    vec2 n = vec2(v.x / lensSqueeze, v.y) * invZ;
     float r2 = dot(n, n);
     float radial = 1.0 + lensParams.x * r2 + lensParams.y * r2 * r2;
     vec2 tangential = vec2(
         2.0 * lensParams.z * n.x * n.y + lensParams.w * (r2 + 2.0 * n.x * n.x),
         lensParams.z * (r2 + 2.0 * n.y * n.y) + 2.0 * lensParams.w * n.x * n.y
     );
-    return focal * (n * radial + tangential);
+    vec2 d = n * radial + tangential;
+    return focal * vec2(d.x * lensSqueeze, d.y);
 }
 
 void main() {
@@ -239,10 +243,10 @@ void main() {
     mat3 cov2D;
     if (lensModel != 0 && !isOrthographic && !enableCovSplats) {
         // The unscented transform through the lens map: six sigma points along the splat's own axes
-        // at +- sqrt(3) sigma, weight 1/6 each, their mean and covariance in pixels. For a linear map
+        // at +- sqrt(3) sigma, weight 1/6 each, mean and covariance in pixels. For a linear map
         // this is J Sigma J^T exactly; a bent map adds its curvature over the splat to the moments.
-        // No local array: a vertex shader array indexed by 2 i and 2 i + 1 miscompiled on ANGLE over
-        // NVIDIA OpenGL and drew streaks, so each point is recomputed in the covariance pass.
+        // Each point is recomputed in the covariance pass, not a local array to bypass compilation bug,
+        // an indexed vertex shader array miscompiled on ANGLE with NVIDIA OpenGL and drew streaks.
         if (!lensValid(viewCenter)) {
             return;
         }
@@ -275,8 +279,9 @@ void main() {
             return;
         }
         cov2D = mat3(c[0][0], c[0][1], 0.0, c[1][0], c[1][1], 0.0, 0.0, 0.0, 0.0);
-        pixelCenter = mean;
-        // The pinhole frustum clip above does not apply to a wide lens: clip on the mapped centre.
+        // Frame shift from projection offsets: off-axis, sheared projection moves ndc by -pmat ([2,0] [2,1])
+        pixelCenter = mean + vec2(-projectionMatrix[2][0], -projectionMatrix[2][1]) * 0.5 * scaledRenderSize;
+        // The pinhole frustum clip does not apply to a wide lens: clip on the mapped centre.
         if (any(greaterThan(abs(pixelCenter), clipXY * 0.5 * scaledRenderSize))) {
             return;
         }
